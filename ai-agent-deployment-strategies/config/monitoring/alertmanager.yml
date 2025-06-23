@@ -1,0 +1,57 @@
+# Prometheus alerting rules for AI agents
+groups:
+  - name: ai-agent-alerts
+    rules:
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, ai_agent_request_duration_seconds) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI agent response time is high"
+          description: "95th percentile response time is {{ $value }}s"
+      
+      - alert: HighErrorRate
+        expr: rate(ai_agent_requests_total{status!="200"}[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} requests/second"
+      
+      - alert: ModelInferenceSlowdown
+        expr: histogram_quantile(0.90, ai_agent_model_inference_seconds) > 3
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model inference is slow"
+          description: "90th percentile inference time is {{ $value }}s"
+      
+      - alert: GPUUtilizationHigh
+        expr: ai_agent_gpu_utilization_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU utilization is very high"
+          description: "GPU {{ $labels.gpu_id }} utilization is {{ $value }}%"
+      
+      - alert: MemoryUsageHigh
+        expr: ai_agent_memory_usage_bytes / (1024^3) > 10  # 10GB
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}GB"
+      
+      - alert: ActiveSessionsLow
+        expr: ai_agent_active_sessions < 1
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "No active user sessions"
+          description: "The AI agent has no active sessions for 10 minutes"

@@ -1,0 +1,155 @@
+# GitLab CI/CD pipeline for AI agent deployment
+stages:
+  - test
+  - build
+  - model_validation
+  - security_scan
+  - staging_deploy
+  - performance_test
+  - production_deploy
+  - post_deploy_validation
+
+variables:
+  DOCKER_REGISTRY: "your-registry.com"
+  APP_NAME: "ai-agent"
+  KUBECONFIG_FILE: $KUBECONFIG_STAGING
+
+# Unit and Integration Tests
+test_code:
+  stage: test
+  image: python:3.9
+  services:
+    - redis:6.2
+  script:
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov pytest-asyncio
+    - pytest tests/ --cov=src/ --cov-report=xml
+    - python -m pytest tests/integration/ -v
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  only:
+    - merge_requests
+    - main
+
+# Model Validation Tests
+validate_models:
+  stage: model_validation
+  image: python:3.9-slim
+  before_script:
+    - pip install torch transformers numpy sklearn
+  script:
+    - python scripts/validate_model_performance.py
+    - python scripts/check_model_compatibility.py
+    - python scripts/benchmark_inference_speed.py
+  artifacts:
+    paths:
+      - model_validation_report.json
+    expire_in: 1 week
+  only:
+    - main
+
+# Build and Push Docker Images
+build_image:
+  stage: build
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker build -t $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+  only:
+    - main
+
+# Security Scanning
+security_scan:
+  stage: security_scan
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --format template --template "@contrib/sarif.tpl" 
+        --output trivy-results.sarif $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - trivy fs --format template --template "@contrib/sarif.tpl" 
+        --output trivy-fs-results.sarif .
+  artifacts:
+    paths:
+      - trivy-results.sarif
+      - trivy-fs-results.sarif
+    expire_in: 1 week
+  only:
+    - main
+
+# Staging Deployment
+deploy_staging:
+  stage: staging_deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context staging
+    - envsubst < k8s/deployment.yaml | kubectl apply -f -
+    - kubectl rollout status deployment/ai-agent-staging -n staging
+    - kubectl get pods -n staging -l app=ai-agent
+  environment:
+    name: staging
+    url: https://ai-agent-staging.yourdomain.com
+  only:
+    - main
+
+# Performance Testing
+performance_test:
+  stage: performance_test
+  image: python:3.9
+  before_script:
+    - pip install locust requests
+  script:
+    - python scripts/performance_test.py --host=https://ai-agent-staging.yourdomain.com
+    - python scripts/analyze_performance_results.py
+  artifacts:
+    paths:
+      - performance_report.html
+      - performance_metrics.json
+    expire_in: 1 week
+  only:
+    - main
+
+# Production Deployment (Blue-Green)
+deploy_production:
+  stage: production_deploy
+  image: bitnami/kubectl:latest
+  script:
+    - kubectl config use-context production
+    # Deploy to green environment
+    - envsubst < k8s/deployment-green.yaml | kubectl apply -f -
+    - kubectl rollout status deployment/ai-agent-green -n production
+    # Run smoke tests on green environment
+    - python scripts/smoke_tests.py --endpoint=https://ai-agent-green.yourdomain.com
+    # Switch traffic to green environment
+    - kubectl patch service ai-agent-service -n production -p '{"spec":{"selector":{"version":"green"}}}'
+    # Scale down blue environment after successful switch
+    - kubectl scale deployment ai-agent-blue --replicas=0 -n production
+  environment:
+    name: production
+    url: https://ai-agent.yourdomain.com
+  when: manual
+  only:
+    - main
+
+# Post-Deployment Validation
+post_deploy_validation:
+  stage: post_deploy_validation
+  image: python:3.9
+  script:
+    - pip install requests pytest
+    - python scripts/production_health_check.py
+    - python scripts/validate_agent_responses.py
+    - python scripts/check_performance_metrics.py
+  artifacts:
+    paths:
+      - post_deploy_report.json
+    expire_in: 1 month
+  only:
+    - main
