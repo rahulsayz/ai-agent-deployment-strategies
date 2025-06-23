@@ -83,7 +83,7 @@ These components need to be **built from scratch**:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/ai-agent-deployment-strategies.git
+git clone https://github.com/rahulsayz/ai-agent-deployment-strategies.git
 cd ai-agent-deployment-strategies
 
 # 2. Setup Python environment
